@@ -30,7 +30,7 @@ c.程式分為：<table><tr><td>
        1.ESP8266+PMS5003：將管道間的PM2.5數據傳回後端DB，供homesys.py分析使用。
 	     2.ESP8266+IR發射元件：定期查詢DB中的控制指令，並且以IR元件發送命令來啟動/關閉浴室抽風機。
     </td></tr>  
-    </table>  
+   </table>
 <br>
 4.homekit.py:將DB中PM2.5數據送進HomeBridge中。<br>
   
