@@ -1,0 +1,163 @@
+#include "PMS.h"
+#include "SoftwareSerial.h"
+#include <SPI.h>
+#include <string.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266WiFiMulti.h>
+#include <Base64.h>
+
+long pmcf10=0;
+long pmcf25=0;
+long pmcf100=0;
+long pmat10=0;
+long pmat25=0;
+long pmat100=0;
+
+char buf[50];
+// 初始化PMS3003
+SoftwareSerial Serial2(13, 15); // RX2, TX2  ;  D7,D8
+PMS pms(Serial);
+PMS::DATA data;
+// wifi
+const char* ssid     = "OME";
+const char* password = "5240";
+ESP8266WiFiMulti WiFiMulti;
+WiFiClient client;
+
+
+//For ThingSpeak
+const char* apiKey = "J86BUC";
+const char* resource = "/update?api_key=";
+const char* server = "api.thingspeak.com";
+
+//一些全域變數
+int iLinkNetWork=0;
+
+void setup()
+{ 
+  iLinkNetWork = 0;
+  //初始化序列阜，監控視窗用
+  Serial.begin(9600);
+  Serial.println(F("open COM12"));
+  //初始化PMS3003與板子連線
+  Serial2.begin(9600); 
+  //連線wifi
+  WiFi.mode(WIFI_STA);
+  WiFiMulti.addAP(ssid, password);
+  Serial.println(F("Wait for WiFi... "));
+  while (WiFiMulti.run() != WL_CONNECTED) {
+    delay(1000);
+  }
+  Serial.println("");
+  Serial.println("WiFi connected  IPaddress:");
+  Serial.print(WiFi.localIP());
+  iLinkNetWork = 1;
+  delay(500);
+}
+ 
+void loop()
+{
+  float fPM1,fPM2_5,fPM10;
+  int iCount;
+  
+  if (iLinkNetWork == 1){
+    if (pms.read(data))
+    {
+      Serial.println("PM1  :" + String(data.PM_AE_UG_1_0) + "(ug/m3)");
+      Serial.println("PM2.5:" + String(data.PM_AE_UG_2_5) + "(ug/m3)");
+      Serial.println("PM10 :" + String(data.PM_AE_UG_10_0) + "(ug/m3)");
+      // 寫入資料庫
+      fPM1   = data.PM_AE_UG_1_0;
+      fPM2_5 = data.PM_AE_UG_2_5;
+      fPM10  = data.PM_AE_UG_10_0;
+      //寫入Thingspeak
+      wrt_to_thingspeak(fPM1,fPM2_5,fPM10);
+      //寫入DB using ws
+      send_data_by_php("PMS3003-2-PM1",String(data.PM_AE_UG_1_0));
+      send_data_by_php("PMS3003-2-PM2_5",String(data.PM_AE_UG_2_5));
+      send_data_by_php("PMS3003-2-PM10",String(data.PM_AE_UG_10_0));
+    }  
+  }
+  //delay(30000);
+  
+}
+//用WS寫入MySql
+void send_data_by_php(String dev_typ,String val){
+  int iLnk = 0;
+  String s;
+ 
+  if (client.connect("duckegg.duckdns.org", 8088)) {
+    iLnk = 1;
+  }
+  while(iLnk ==0){
+    delay(500);
+    Serial.print(F("\nreconnect php srv"));
+    if (client.connect("duckegg.duckdns.org", 8088)) {
+      iLnk = 1;
+    }  
+  }
+  s = "GET /getenvlog.php?devtyp=" + dev_typ + "&val=" + val; 
+  Serial.print(F("\n"));
+  Serial.print(s);
+  client.println(s);
+  String line = client.readStringUntil('\r');                
+  Serial.println(line);
+  Serial.print(F("\nclosing connection"));
+  client.stop();
+}
+void SendToLine(String msg){
+  String req;
+  String encode;
+  int    iLnk = 0;
+ 
+  if (client.connect("duckegg.duckdns.org", 8088)) {
+    iLnk = 1;
+  }
+  while(iLnk ==0){
+    delay(500);
+    Serial.print(F("\nreconnect php srv"));
+    if (client.connect("duckegg.duckdns.org", 8088)) {
+      iLnk = 1;
+    }  
+  }
+  encode = base64::encode(msg);
+  // This will send the request to the server
+  client.println("GET /sendtoline.php?msg=" + encode);
+  
+  String line = client.readStringUntil('\r');                
+  Serial.println(line);
+  Serial.print(F("\nclosing connection"));
+  client.stop();
+}
+//寫資料到Thingspeak
+void wrt_to_thingspeak(float fPM1,float fPM2_5,float fPM10){
+  int iLnk = 0;
+  String sPM1,sPM2_5,sPM10;
+  
+  // 使用 80 Port 連線
+  if (client.connect(server, 80)) {
+  //  iLnk = 1;
+  } 
+  sPM1   = String(fPM1);
+  sPM2_5 = String(fPM2_5);
+  sPM10  = String(fPM10);
+  client.print(String("GET ") + resource + apiKey + "&field1=" + sPM1 + "&field2=" + sPM2_5 + "&field3=" + sPM10 +
+               " HTTP/1.1\r\n" +
+               "Host: " + server + "\r\n" + 
+               "Connection: close\r\n\r\n");
+                  
+  int timeout = 5 * 10; // 5 seconds             
+  while(!client.available() && (timeout-- > 0)){
+    delay(1000);
+  }
+  
+  if(!client.available()) {
+     Serial.println(F("No response, going back to sleep"));
+  }
+  while(client.available()){
+    Serial.write(client.read());
+  }
+  
+  Serial.println(F("\nclosing connection"));
+  client.stop();
+}

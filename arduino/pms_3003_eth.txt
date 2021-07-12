@@ -1,0 +1,140 @@
+#include "PMS.h"
+#include "SoftwareSerial.h"
+#include <SPI.h>
+#include <Ethernet.h>
+#include <string.h>
+// for ARDUINO UNO R3 + Arduino Ethernet Shield W5100 R3
+// 初始化PMS3003
+SoftwareSerial Serial1(2, 3); // RX, TX 
+PMS pms(Serial1);
+PMS::DATA data;
+// 指定網路卡 MAC 卡號
+byte mac[] = {  0x00, 0xAA, 0xBB, 0xCC, 0xDE, 0x02 };
+
+// 初始化 Ethernet client library
+EthernetClient client;
+
+//For ThingSpeak
+const char* apiKey = "86BUC";
+const char* resource = "/update?api_key=";
+const char* server = "api.thingspeak.com";
+
+//一些全域變數
+int iLinkNetWork=0;
+
+void setup()
+{ 
+  //初始化序列阜，監控視窗用
+  Serial.begin(115200);
+  Serial.println(F("open COM11"));
+  //初始化PMS3003與板子連線
+  Serial1.begin(9600); 
+  // 啟用 Ethernet 連線，預設會以 DHCP 取得 IP 位址
+  
+  if (Ethernet.begin(mac) != 0) {
+    // 輸出 IP 位址
+    Serial.print(F("IP 位址："));
+    Serial.println(Ethernet.localIP());
+    iLinkNetWork = 1;
+    delay(1000);
+  }
+  else {
+      Serial.print(F("網路連線失敗."));
+    }
+  delay(1000);
+}
+ 
+void loop()
+{
+  float fPM1,fPM2_5,fPM10;
+  int iCount;
+  if (iLinkNetWork == 1){
+    if (pms.read(data))
+    {
+//      Serial.println("PM1  :" + String(data.PM_AE_UG_1_0) + "(ug/m3)");
+//      Serial.println("PM2.5:" + String(data.PM_AE_UG_2_5) + "(ug/m3)");
+//      Serial.println("PM10 :" + String(data.PM_AE_UG_10_0) + "(ug/m3)");
+      // 寫入資料庫
+      fPM1   = data.PM_AE_UG_1_0;
+      fPM2_5 = data.PM_AE_UG_2_5;
+      fPM10  = data.PM_AE_UG_10_0;
+      //寫入Thingspeak
+      wrt_to_thingspeak(fPM1,fPM2_5,fPM10);
+      //寫入DB using ws
+      send_data_by_php("PMS3003-2-PM1",String(data.PM_AE_UG_1_0));
+      send_data_by_php("PMS3003-2-PM2_5",String(data.PM_AE_UG_2_5));
+      send_data_by_php("PMS3003-2-PM10",String(data.PM_AE_UG_10_0));
+      delay(30000);
+    }  
+  }
+  
+}
+//用WS寫入MySql
+void send_data_by_php(String dev_typ,String val){
+  char* php="10.0.4.15";
+  int iLnk = 0;
+ 
+  if (client.connect(php, 8088)) {
+    iLnk = 1;
+  }
+  while(iLnk ==0){
+    delay(1000);
+    Serial.print(F("reconnect php srv"));
+    if (client.connect(php, 8088)) {
+      iLnk = 1;
+    }  
+  }
+  client.print(String("GET ") + "/wrtenvlog.php?devtyp=" + dev_typ+"&val=" + val +  
+               " HTTP/1.1\r\n" +
+               "Host: " + php + "\r\n" + 
+               "Connection: close\r\n\r\n");
+                  
+  int timeout = 5 * 10; // 5 seconds             
+  while(!client.available() && (timeout-- > 0)){
+    Serial.print(F("\nreconnect php srv"));
+    delay(1000);
+  }
+  
+  if(!client.available()) {
+     Serial.println(F("No response, going back to sleep"));
+  }
+  while(client.available()){
+    Serial.write(client.read());
+  }
+  
+  Serial.println(F("\nclosing connection"));
+  client.stop();
+}
+
+//寫資料到Thingspeak
+void wrt_to_thingspeak(float fPM1,float fPM2_5,float fPM10){
+  int iLnk = 0;
+  String sPM1,sPM2_5,sPM10;
+  
+  // 使用 80 Port 連線
+  if (client.connect(server, 80)) {
+  //  iLnk = 1;
+  } 
+  sPM1   = String(fPM1);
+  sPM2_5 = String(fPM2_5);
+  sPM10  = String(fPM10);
+  client.print(String("GET ") + resource + apiKey + "&field1=" + sPM1 + "&field2=" + sPM2_5 + "&field3=" + sPM10 +
+               " HTTP/1.1\r\n" +
+               "Host: " + server + "\r\n" + 
+               "Connection: close\r\n\r\n");
+                  
+  int timeout = 5 * 10; // 5 seconds             
+  while(!client.available() && (timeout-- > 0)){
+    delay(1000);
+  }
+  
+  if(!client.available()) {
+     Serial.println(F("No response, going back to sleep"));
+  }
+  while(client.available()){
+    Serial.write(client.read());
+  }
+  
+  Serial.println(F("\nclosing connection"));
+  client.stop();
+}
